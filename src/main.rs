@@ -12,7 +12,7 @@ use winreg::RegKey;
 use urlencoding::decode;
 use chrono::Utc;
 
-const VERSION: &str = "1.0.4";
+const VERSION: &str = "1.0.5";
 const EPIKVERSION: &str = "https://www.epik17.xyz/version";
 const CZIPURL: &str = "https://www.epik17.xyz/latest.zip";
 const EPIKLAUNCHER: &str = "https://www.epik17.xyz/EPIKLauncherBeta.exe";
