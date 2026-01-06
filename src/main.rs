@@ -12,9 +12,10 @@ use winreg::RegKey;
 use urlencoding::decode;
 use chrono::Utc;
 
-const VERSION: &str = "1.0.5";
+const VERSION: &str = "1.0.7";
 const EPIKVERSION: &str = "https://www.epik17.xyz/version";
-const CZIPURL: &str = "https://www.epik17.xyz/latest.zip";
+const CZIPURL: &str = "https://www.epik17.xyz/EPIKPlayerBeta.zip";
+const SZIPURL: &str = "https://www.epik17.xyz/EPIKStudioBeta.zip";
 const EPIKLAUNCHER: &str = "https://www.epik17.xyz/EPIKLauncherBeta.exe";
 
 // poulet u cant say this is a rat...
@@ -32,9 +33,21 @@ fn cdir() -> PathBuf {
     p
 }
 
+fn sdir() -> PathBuf {
+    let mut p = appdata();
+    p.push("Studio");
+    p
+}
+
 fn cexe() -> PathBuf {
     let mut p = cdir();
     p.push("EPIKPlayerBeta.exe");
+    p
+}
+
+fn studioexe() -> PathBuf {
+    let mut p = sdir();
+    p.push("EPIKStudioBeta.exe");
     p
 }
 
@@ -104,13 +117,23 @@ fn updatechecker() -> bool {
         update_needed = true;
     }
     if update_needed {
-        let zip_path = appdata().join("latest.zip");
+        let zip_path = appdata().join("EPIKPlayerBeta.zip");
         filesdownloader(&cachelol(CZIPURL), &zip_path);
         unzip(&zip_path, &cdir());
         fuckoffprotocol();
         addprotocol();
         lclient(&HashMap::new());    
     }
+    if !studioexe().exists() {
+        let studio_zip_path = appdata().join("EPIKStudioBeta.zip");
+        filesdownloader(&cachelol(SZIPURL), &studio_zip_path);
+        unzip(&studio_zip_path, &sdir());
+    }
+    let desktop = env::var("USERPROFILE").unwrap() + r"\Desktop";
+    let launcher_shortcut = format!(r"$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('{}\EPIK17 Launcher.lnk'); $Shortcut.TargetPath = '{}'; $Shortcut.Save()", desktop, lpath().to_str().unwrap());
+    Command::new("powershell").arg("-Command").arg(&launcher_shortcut).output().unwrap();
+    let studio_shortcut = format!(r"$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('{}\EPIK17 Studio.lnk'); $Shortcut.TargetPath = '{}'; $Shortcut.Save()", desktop, studioexe().to_str().unwrap());
+    Command::new("powershell").arg("-Command").arg(&studio_shortcut).output().unwrap();
     update_needed
 }
 
@@ -167,6 +190,10 @@ fn main() {
     if let Some(arg) = env::args().nth(1) {
         let (cmd, params) = epik17(&arg);
         if cmd == "play" {
+            let updated_launch = updatechecker();
+            if !updated_launch {
+                addprotocol();
+            }
             println!("Launching game ID {}...", params.get("gameid").unwrap_or(&"1".to_string()));
             lclient(&params);
         }

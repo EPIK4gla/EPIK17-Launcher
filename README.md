@@ -2,6 +2,10 @@
 
 Hey, this is a simple Rust app that helps you launch games on EPIK17. It keeps itself and the game client updated, sets up a way to open games from links, and gets you playing quickly.
 
+## What's New ?
+- **Studio**: We have added a Studio, so this downloads the studio !
+- **Desktop**: Auto puts the apps on the desktop !
+
 ## What It Does
 
 - **Stays Up to Date**: Downloads new versions of itself if there's an update.
