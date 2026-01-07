@@ -1,30 +1,44 @@
-// made by LVTKR - epik17.xyz
-// =============================
 use std::fs::{self, File};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Child};
 use std::collections::HashMap;
 use std::env;
+use std::sync::{Arc, Mutex};
 use reqwest::blocking::get;
 use zip::ZipArchive;
 use winreg::enums::*;
 use winreg::RegKey;
 use urlencoding::decode;
 use chrono::Utc;
+use ctrlc;
+use winapi::um::wincon::GetConsoleWindow;
+use winapi::um::winuser::ShowWindow;
 
-const VERSION: &str = "1.0.7";
+// i'll try to add a anti-cheat later
+// anways, heres my TODO list:
+// [x] auto updater
+// [x] protocol handler
+// [x] download client if not exists
+// [x] download studio if not exists
+// [x] launch client with args from protocol
+// [-] discord rich presence -- broken for now
+// [ ] anti-cheat
+// [ ] better error handling
+// [ ] GUI launcher
+// Maybe a Linux version in the future?
+
+const VERSION: &str = "1.0.9"; // i sometime forget to update this lmao
 const EPIKVERSION: &str = "https://www.epik17.xyz/version";
 const CZIPURL: &str = "https://www.epik17.xyz/EPIKPlayerBeta.zip";
 const SZIPURL: &str = "https://www.epik17.xyz/EPIKStudioBeta.zip";
 const EPIKLAUNCHER: &str = "https://www.epik17.xyz/EPIKLauncherBeta.exe";
-
-// poulet u cant say this is a rat...
-//its litterally open sourced now..
+// const DSCURL: &str = "https://www.epik17.xyz/dsc.exe";
+// const DSC: &str = "1233051990582366240";
 
 fn appdata() -> PathBuf {
-    let mut path: PathBuf = env::var_os("APPDATA").unwrap().into();
-    path.push("EPIK17");
-    path
+    let mut p: PathBuf = env::var_os("APPDATA").unwrap().into();
+    p.push("EPIK17");
+    p
 }
 
 fn cdir() -> PathBuf {
@@ -45,10 +59,24 @@ fn cexe() -> PathBuf {
     p
 }
 
-fn studioexe() -> PathBuf {
-    let mut p = sdir();
-    p.push("EPIKStudioBeta.exe");
-    p
+// this function ensures the EPIKPlayerBeta.exe is still here
+fn eepikexe() -> PathBuf {
+    let mut target = cdir();
+    target.push("EPIKPlayerBeta.exe");
+
+    let source = cexe();
+
+    if !target.exists() {
+        fs::copy(&source, &target).unwrap();
+    } else {
+        let src_meta = fs::metadata(&source).unwrap();
+        let tgt_meta = fs::metadata(&target).unwrap();
+        if src_meta.len() != tgt_meta.len() {
+            fs::copy(&source, &target).unwrap();
+        }
+    }
+
+    target
 }
 
 fn lpath() -> PathBuf {
@@ -57,145 +85,183 @@ fn lpath() -> PathBuf {
     p
 }
 
+// fn dsc_path() -> PathBuf {
+//     let mut p = appdata();
+//     p.push("dsc.exe");
+//     p
+// }
+
+// kind of cache buster
 fn cachelol(url: &str) -> String {
-    let timestamp = Utc::now().timestamp();
+    let ts = Utc::now().timestamp();
     if url.contains('?') {
-        format!("{}&_={}", url, timestamp)
+        format!("{}&_={}", url, ts)
     } else {
-        format!("{}?_={}", url, timestamp)
+        format!("{}?_={}", url, ts)
     }
 }
 
 fn filesdownloader(url: &str, path: &PathBuf) {
-    let mut resp = get(url).unwrap();
-    let mut out = File::create(path).unwrap();
-    std::io::copy(&mut resp, &mut out).unwrap();
+    let mut r = get(url).unwrap();
+    let mut f = File::create(path).unwrap();
+    std::io::copy(&mut r, &mut f).unwrap();
 }
 
-fn unzip(path: &PathBuf, out_dir: &PathBuf) {
-    if out_dir.exists() {
-        fs::remove_dir_all(out_dir).unwrap();
+// i don't really need to explain this one
+fn unzip(path: &PathBuf, out: &PathBuf) {
+    if out.exists() {
+        fs::remove_dir_all(out).unwrap();
     }
-    fs::create_dir_all(out_dir).unwrap();
-    let file = File::open(path).unwrap();
-    let mut archive = ZipArchive::new(file).unwrap();
-    archive.extract(out_dir).unwrap();
+    fs::create_dir_all(out).unwrap();
+    let f = File::open(path).unwrap();
+    let mut z = ZipArchive::new(f).unwrap();
+    z.extract(out).unwrap();
     fs::remove_file(path).unwrap();
 }
 
 fn fuckoffprotocol() {
-    // fuck u
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let _ = hkcu.delete_subkey_all(r"Software\Classes\epik17");
 }
 
 fn addprotocol() {
-    let exe_path_buf = lpath();
-    let exe_path_string = exe_path_buf.to_str().unwrap().to_string();
+    let exe = lpath().to_str().unwrap().to_string();
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key = hkcu.create_subkey(r"Software\Classes\epik17").unwrap().0;
-    key.set_value("", &"URL: EPIK17 Protocol").unwrap();
-    key.set_value("URL Protocol", &"").unwrap();
-    let icon_key = key.create_subkey("DefaultIcon").unwrap().0;
-    icon_key.set_value("", &format!("\"{}\",0", exe_path_string)).unwrap();
-    let command_key = key.create_subkey(r"shell\open\command").unwrap().0;
-    command_key.set_value("", &format!("\"{}\" \"%1\"", exe_path_string)).unwrap();
+    let k = hkcu.create_subkey(r"Software\Classes\epik17").unwrap().0;
+    k.set_value("", &"URL:EPIK17").unwrap();
+    k.set_value("URL Protocol", &"").unwrap();
+    k.create_subkey("DefaultIcon").unwrap().0 // i have no idea what is this for
+        .set_value("", &format!("\"{}\",0", exe)).unwrap();
+    k.create_subkey(r"shell\open\command").unwrap().0
+        .set_value("", &format!("\"{}\" \"%1\"", exe)).unwrap();
 }
 
-fn updatechecker() -> bool {
-    let mut update_needed = false;
-    let resp = get(&cachelol(EPIKVERSION));
-    if let Ok(r) = resp {
-        if let Ok(latest) = r.text() {
-            if latest.trim() != VERSION || !cexe().exists() {
-                update_needed = true;
-            }
-        } else {
-            update_needed = true;
-        }
-    } else {
-        update_needed = true;
-    }
-    if update_needed {
-        let zip_path = appdata().join("EPIKPlayerBeta.zip");
-        filesdownloader(&cachelol(CZIPURL), &zip_path);
-        unzip(&zip_path, &cdir());
+fn updatechecker() {
+    let need = get(&cachelol(EPIKVERSION))
+        .ok()
+        .and_then(|r| r.text().ok())
+        .map(|v| v.trim() != VERSION || !cexe().exists())
+        .unwrap_or(true);
+
+    if need {
+        let zp = appdata().join("EPIKPlayerBeta.zip");
+        filesdownloader(&cachelol(CZIPURL), &zp);
+        unzip(&zp, &cdir());
         fuckoffprotocol();
         addprotocol();
-        lclient(&HashMap::new());    
     }
-    if !studioexe().exists() {
-        let studio_zip_path = appdata().join("EPIKStudioBeta.zip");
-        filesdownloader(&cachelol(SZIPURL), &studio_zip_path);
-        unzip(&studio_zip_path, &sdir());
+
+    if !sdir().exists() || !sdir().join("EPIKStudioBeta.exe").exists() {
+        let zp = appdata().join("EPIKStudioBeta.zip");
+        filesdownloader(&cachelol(SZIPURL), &zp);
+        unzip(&zp, &sdir());
     }
-    let desktop = env::var("USERPROFILE").unwrap() + r"\Desktop";
-    let launcher_shortcut = format!(r"$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('{}\EPIK17 Launcher.lnk'); $Shortcut.TargetPath = '{}'; $Shortcut.Save()", desktop, lpath().to_str().unwrap());
-    Command::new("powershell").arg("-Command").arg(&launcher_shortcut).output().unwrap();
-    let studio_shortcut = format!(r"$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('{}\EPIK17 Studio.lnk'); $Shortcut.TargetPath = '{}'; $Shortcut.Save()", desktop, studioexe().to_str().unwrap());
-    Command::new("powershell").arg("-Command").arg(&studio_shortcut).output().unwrap();
-    update_needed
+
+    // discord rich presence client
+    // let dp = dsc_path();
+    // if !dp.exists() {
+    //     filesdownloader(DSCURL, &dp);
+    // }
 }
 
-//ts detect if its epik17 protocol and parse it
 fn epik17(url: &str) -> (String, HashMap<String, String>) {
-    let url = url.replace("epik17:", "");
-    let parts: Vec<&str> = url.split('+').collect();
-    let command = parts[0].to_string();
-    let mut params = HashMap::new();
+    // we are gonna handle studio edits soon
+    let u = url.replace("epik17:", "");
+    let parts: Vec<&str> = u.split('+').collect();
+    let mut map = HashMap::new();
     for p in &parts[1..] {
-        if let Some(idx) = p.find(':') {
-            let key = &p[..idx];
-            let val = &p[idx+1..];
-            params.insert(key.to_string(), decode(val).unwrap().to_string());
+        if let Some(i) = p.find(':') {
+            map.insert(p[..i].to_string(), decode(&p[i + 1..]).unwrap().to_string());
         }
     }
-    (command, params)
+    (parts[0].to_string(), map)
 }
 
-fn lclient(params: &HashMap<String, String>) {
-    let default_ticket = "dummy_ticket".to_string();
-    let default_gameid = "1".to_string();
-    let ticket = params.get("ticket").unwrap_or(&default_ticket);
-    let gameid = params.get("gameid").unwrap_or(&default_gameid);
-    let base_url = "www.epik17.xyz";
-    let join_url = format!("https://{}/game/PlaceLauncher.ashx?placeId={}&t={}", base_url, gameid, ticket);
-    let _ = Command::new(cexe())
+fn lclient(p: &HashMap<String, String>) -> Child { // (Child, Child) {
+    let ticket = p.get("ticket").cloned().unwrap_or_else(|| "whatyouwantthistobe".to_string());
+    let gameid = p.get("gameid").cloned().unwrap_or_else(|| "1818".to_string());
+    let base = "www.epik17.xyz";
+
+    let game_exe = eepikexe();
+    // let dsc_exe = dsc_path();
+
+    // i need to see why this don't work...
+    // i am tired of that dsc.exe..
+    // let dsc_child = Command::new(&dsc_exe)
+    //     .arg("-c").arg(DSC)
+    //     .arg("-d").arg("Playing EPIK17")
+    //     .arg("-s").arg("In Game")
+    //     .arg("-N").arg("13b5bfbebee2d722a1f0d2af181ac561")
+    //     .arg("-I").arg("EPIK17.xyz")
+    //     .arg("-t")
+    //     .spawn()
+    //     .unwrap();
+
+    // yeah well this works
+    let game_child = Command::new(&game_exe)
         .arg("--play")
-        .arg(format!("--authenticationUrl=https://{}/Login/Negotiate.ashx", base_url))
+        .arg(format!("--authenticationUrl=https://{}/Login/Negotiate.ashx", base))
         .arg(format!("--authenticationTicket={}", ticket))
-        .arg(format!("--joinScriptUrl={}", join_url))
+        .arg(format!(
+            "--joinScriptUrl=https://{}/game/PlaceLauncher.ashx?placeId={}&t={}",
+            base, gameid, ticket
+        ))
+        .spawn()
+        .unwrap();
+
+    game_child //(game_child, dsc_child)
+}
+
+fn gamelmao() {
+    let _ = Command::new("cmd")
+        .arg("/c")
+        .arg("start")
+        .arg("")
+        .arg("https://www.epik17.xyz/games")
         .spawn();
 }
 
-// yes no wimpy gamelmao
-fn gamelmao() {
-    let _ = Command::new("cmd").arg("/c").arg("start").arg("").arg("https://www.epik17.xyz/games").spawn();
-}
-
 fn main() {
-    let appdata = appdata();
-    let content = cdir();
-    fs::create_dir_all(&appdata).unwrap();
-    fs::create_dir_all(&content).unwrap();
+    fs::create_dir_all(appdata()).unwrap();
+    fs::create_dir_all(cdir()).unwrap();
+
     if !lpath().exists() || env::current_exe().unwrap() != lpath() {
-        println!("Downloading...");
         filesdownloader(&cachelol(EPIKLAUNCHER), &lpath());
         gamelmao();
     }
-    let updated = updatechecker();
-    if !updated {
-        addprotocol();
-    }
+
+    updatechecker();
+    addprotocol();
+
     if let Some(arg) = env::args().nth(1) {
         let (cmd, params) = epik17(&arg);
         if cmd == "play" {
-            let updated_launch = updatechecker();
-            if !updated_launch {
-                addprotocol();
+            // even if playing, we ALWAYS need to check if theres a new update
+            updatechecker();
+
+            let game_child = lclient(&params); //let (mut game_child, mut dsc_child) = lclient(&params);
+
+            unsafe {
+                let h = GetConsoleWindow();
+                if !h.is_null() {
+                    ShowWindow(h, 0);
+                }
             }
-            println!("Launching game ID {}...", params.get("gameid").unwrap_or(&"1".to_string()));
-            lclient(&params);
+
+            let game_arc = Arc::new(Mutex::new(game_child));
+            // let dsc_arc = Arc::new(Mutex::new(dsc_child));
+
+            let game_clone = Arc::clone(&game_arc);
+            // let dsc_clone = Arc::clone(&dsc_arc);
+
+            ctrlc::set_handler(move || {
+                let _ = game_clone.lock().unwrap().kill();
+                // let _ = dsc_clone.lock().unwrap().kill();
+                std::process::exit(0);
+            }).unwrap();
+
+            game_arc.lock().unwrap().wait().unwrap();
+            // dsc_arc.lock().unwrap().kill().unwrap();
         }
     }
 }
